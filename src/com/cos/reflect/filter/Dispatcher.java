@@ -1,8 +1,11 @@
 package com.cos.reflect.filter;
 
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
+import java.lang.reflect.Parameter;
+import java.util.Enumeration;
 
 import javax.servlet.Filter;
 import javax.servlet.FilterChain;
@@ -17,7 +20,9 @@ import com.cos.reflect.anno.RequestMapping;
 import com.cos.reflect.controller.UserController;
 
 public class Dispatcher implements Filter {
-
+	
+	private boolean isMaching = false;
+	
 	@Override
 	public void doFilter(ServletRequest req, ServletResponse resp, FilterChain chain)
 			throws IOException, ServletException {
@@ -34,18 +39,28 @@ public class Dispatcher implements Filter {
 
 		UserController userController = new UserController();
 		Method[] methods = userController.getClass().getDeclaredMethods();
-
+		
 		for (Method method : methods) { // 리플렉션한 메서드 개수만큼 순회함
 
 			Annotation annotation = method.getDeclaredAnnotation(RequestMapping.class);
 			RequestMapping requestMapping = (RequestMapping) annotation;
+			
+			
 			System.out.println("requestMapping : " + requestMapping.value());
 			if (requestMapping.value().equals(endPoint)) {
-		
+				isMaching = true;
 				try {
-					
-					String path = (String) method.invoke(userController);
-					
+					Parameter[] params = method.getParameters();
+					String path;
+					if (params.length != 0) {
+						Object dtoInstance = params[0].getType().newInstance();
+						setData(dtoInstance, request); // 인스턴스에 파라메터 값 추가하기 (레퍼런스를 넘겨서 리턴 안받아도 됨)
+						path = (String) method.invoke(userController, dtoInstance);
+					} else {
+						path = (String) method.invoke(userController);
+					}
+
+					System.out.println("path : " + path);
 					RequestDispatcher dis = request.getRequestDispatcher(path);
 					dis.forward(request, response);
 					break; // 더 이상 메서드를 리플렉션 할 필요 없어서 빠져나감.
@@ -54,10 +69,40 @@ public class Dispatcher implements Filter {
 				}
 				break;
 			}
-
+			
 		}
-
+		if (isMaching == false) {
+			response.setContentType("text/html; charset=utf-8");
+			PrintWriter out = response.getWriter();
+			out.println("잘못된 주소 요청입니다. 404에러");
+			out.flush();
+		}
 	}
 
+	private String keyToMethodKey(String key) {
+		String firstkey = key.substring(0, 1);
+		String remainKey = key.substring(1);
+		return "set" + firstkey.toUpperCase() + remainKey;
+	}
 
+	private <T> void setData(T instance, HttpServletRequest request) {
+		System.out.println("인스턴스 타입 : " + instance.getClass());
+		Enumeration<String> params = request.getParameterNames();
+
+		while (params.hasMoreElements()) {
+			String key = (String) params.nextElement();
+			String methodKey = keyToMethodKey(key);
+			System.out.println("실행할 setter메서드 :" + methodKey);
+			Method[] methods = instance.getClass().getMethods();
+			for (Method m : methods) {
+				if (m.getName().equals(methodKey)) {
+					try {
+						m.invoke(instance, request.getParameter(key));
+					} catch (Exception e) {
+						e.printStackTrace();
+					}
+				}
+			}
+		}
+	}
 }
